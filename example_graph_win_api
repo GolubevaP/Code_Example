@@ -1,0 +1,922 @@
+LRESULT CALLBACK ChildTrajectoryProc_XY(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+	HDC hdc;
+	PAINTSTRUCT ps;
+
+	static ControlPoint cp;
+	// перья и кисти для рисования
+	static HPEN hPen_grid, hPen_axes, hPen_coord, hPen_add, hPen_circle, hPen_delete;
+	static HBRUSH hBrush_point_pick, hBrush_point_unpick;
+	// шрифты для подписей осей
+	HFONT xFont, yFont;
+
+	// указатель на первый элемент вектора КТ
+	std::vector<ControlPoint>::iterator i_cp = ControlP.begin();
+	// размер вектора КТ
+	int size = ControlP.size();
+	
+	
+	// проверка ошибок
+	int fail;
+
+	static int picked_num = -1;
+	int new_picked_num = -1;
+	static BOOL lbuttondown = FALSE;
+	static BOOL movebutton = FALSE;
+
+
+	// флаг "хоть одна КТ выделена"
+	int check_pick = 0;
+	// флаг смены выделения КТ
+	int change_pick = 0;
+
+	// оконные размеры (pix), 
+	static int sx, sy;
+	//координаты курсора в пикселях
+	int x_p, y_p, dx_p, dy_p;
+	// координаты курсора в метрах
+	static int mx, my, pre_mx, pre_my;
+
+	// параметры максимальных значений по осям (и их предыдущие значения)
+	static double max_x, max_y, pre_max_x = 0, pre_max_y = 0;
+
+	// коэффициенты пропорциональности метры/пиксели
+	double kx, ky, k;
+
+	// зазор для осей
+	static int delta = 30;
+
+	double* p;
+
+	wchar_t buff_x[5] = { 'X', ',', ' ', 'm' };
+	wchar_t buff_y[5] = { 'Y', ',', ' ', 'm' };
+
+	static double X[3], Y[3], koef[2];
+
+	// определение коэффициентов пропорциональности по осям координат и установка регионов КТ
+	if ((size > 1)) 
+	{
+		pre_max_x = max_x;
+		p = get_max_min_delta_CP(i_cp, size, 0);
+		X[0] = max_x = *p;
+		X[1] = *(p + 1);
+		X[2] = *(p + 2);
+		pre_max_y = max_y;
+		p = get_max_min_delta_CP(i_cp, size, 1);
+		Y[0] = max_y = *p;
+		Y[1] = *(p + 1);
+		Y[2] = *(p + 2);
+
+		kx = max_x / (sx - 2 * delta);
+		ky = max_y / (sy - 2 * delta);
+
+		RATIO_xy = max(kx, ky);
+		RATIO = max(RATIO_xz, RATIO_xy);
+
+		k = RATIO;
+
+		koef[0] = koef[1] = RATIO;
+
+		for (UINT i = 0; i < size; i++) 
+		{
+			ControlP[i].set_rgn_xy(k, k);
+			ControlP[i].set_rgn_xz(k, k);
+		}
+	}
+
+
+	switch (message)
+	{
+	case WM_SIZE:
+	{
+		// определение размеров дочернего окна РАСЧЕТА
+		sx = LOWORD(lParam);
+		sy = HIWORD(lParam);
+		if (size > 1) FLAG_BUILD = 1;
+		else FLAG_BUILD = 0;
+		break;
+	}
+	case WM_CREATE:
+	{
+		// создание кистей и перьев
+		hPen_grid = CreatePen(PS_DASH, 1, RGB(200, 200, 200));
+		hPen_axes = CreatePen(PS_SOLID, 1, RGB(0, 0, 0));
+		hPen_coord = CreatePen(PS_SOLID, 6, RGB(0, 0, 255));
+		hPen_add = CreatePen(PS_DASH, 1, RGB(0, 0, 255));
+
+		hPen_circle = CreatePen(PS_DASH, 1, RGB(255, 0, 255));
+		hPen_delete = CreatePen(PS_SOLID, 1, RGB(255, 255, 255));
+
+		hBrush_point_pick = CreateSolidBrush(RGB(255, 0, 0));
+		hBrush_point_unpick = CreateSolidBrush(RGB(0, 0, 255));
+		break;
+	}
+	case WM_LBUTTONDOWN:
+	{
+		// определяем координаты курсора в метрах
+		x_p = GET_X_LPARAM(lParam);
+		y_p = GET_Y_LPARAM(lParam);
+		mx = ceil((x_p - delta) * k);
+		my = ceil((sy - y_p - delta) * k);
+
+		// проверяем, есть ли хоть одна выделенная КТ
+		size = ControlP.size();
+		picked_num = -1;
+		for (int i = 0; i < size; i++)
+		{
+			if (ControlP[i].check_flag_pick())
+			{
+				picked_num = i;
+				break;
+			}
+		}
+
+		// если есть выделенная КТ
+		if ((0 <= picked_num) && (picked_num < size))
+		{
+			// мы в нее попали
+			if (ControlP[picked_num].check_point_xy(mx, my))
+			{
+				// можем двигать
+				lbuttondown = TRUE;
+				movebutton = FALSE;
+				ControlP[picked_num].set_flag_move(TRUE);
+				break;
+			}
+			// мы в нее не попали
+			else
+			{
+				new_picked_num = -1;
+				// а в другую КТ попали?
+				for (int i = 0; i < size; i++)
+				{
+					// проверяем только НЕвыделенные КТ, так как выделенную проверили ранее
+					if (i != picked_num)
+					{
+						// попали в другую КТ
+						if (ControlP[i].check_point_xy(mx, my))
+						{
+							lbuttondown = TRUE;
+							movebutton = TRUE;
+							new_picked_num = i;
+							ControlP[picked_num].set_flag_pick(FALSE);
+							ControlP[new_picked_num].set_flag_pick(TRUE);
+							ControlP[new_picked_num].set_flag_move(TRUE);
+							
+							if (TAB_LIST_FOT[0])
+							{
+								set_cp_to_dlg(hTraj_hard, DLG_p_hard, (ControlP.begin() + new_picked_num), 0);
+								// в списке вывода КТ выделяем соответствующую строку
+								fail = SendDlgItemMessage(hTraj_hard, DLG_p_hard._LIST1, LB_SETCURSEL, new_picked_num, NULL);
+								fail = SendDlgItemMessage(hTraj_hard, DLG_p_hard._LIST2, LB_SETCURSEL, new_picked_num, NULL);
+								fail = SendDlgItemMessage(hTraj_hard, DLG_p_hard._LIST3, LB_SETCURSEL, new_picked_num, NULL);
+								fail = SendDlgItemMessage(hTraj_hard, DLG_p_hard._LIST4, LB_SETCURSEL, new_picked_num, NULL);
+
+								double r = ControlP[new_picked_num].get_radius();
+								if (r < 1.0) r = *get_max_min_delta_CP(ControlP.begin(), ControlP.size(), 1) / 2;
+								SendMessage(DLG_p_hard._hSlider, TBM_SETRANGEMIN, 0, r * 0.5);
+								SendMessage(DLG_p_hard._hSlider, TBM_SETRANGEMAX, 0, r * 1.5);
+								SendMessage(DLG_p_hard._hSlider, TBM_SETPOS, TRUE, r);
+
+								UpdateWindow(hTraj_hard);
+							}
+							else if (TAB_LIST_FOT[1])
+							{
+								set_cp_to_dlg(hTraj_gate, DLG_p_gate, (ControlP.begin() + new_picked_num), 1);
+								// в списке вывода КТ выделяем соответствующую строку
+								fail = SendDlgItemMessage(hTraj_gate, DLG_p_gate._LIST1, LB_SETCURSEL, new_picked_num, NULL);
+								fail = SendDlgItemMessage(hTraj_gate, DLG_p_gate._LIST2, LB_SETCURSEL, new_picked_num, NULL);
+								fail = SendDlgItemMessage(hTraj_gate, DLG_p_gate._LIST3, LB_SETCURSEL, new_picked_num, NULL);
+								fail = SendDlgItemMessage(hTraj_gate, DLG_p_gate._LIST4, LB_SETCURSEL, new_picked_num, NULL);
+
+								double h = ControlP[new_picked_num].get_gate();
+								if (h < 0) h = GATE_METR;
+								SendMessage(DLG_p_gate._hSlider, TBM_SETRANGEMIN, 0, h * 0.5);
+								SendMessage(DLG_p_gate._hSlider, TBM_SETRANGEMAX, 0, h * 1.5);
+								SendMessage(DLG_p_gate._hSlider, TBM_SETPOS, TRUE, h);
+
+								UpdateWindow(hTraj_gate);
+							}
+
+							picked_num = new_picked_num;
+
+							InvalidateRect(hChildTrajectory[0], NULL, TRUE);
+							InvalidateRect(hChildTrajectory[1], NULL, TRUE);
+							UpdateWindow(hChildTrajectory[0]);
+							UpdateWindow(hChildTrajectory[1]);
+
+							break;
+						}
+						else
+						{
+							continue;
+						}
+					}
+				}
+
+				// не попали ни в одну другую КТ
+				if (new_picked_num < 0)
+				{
+					lbuttondown = FALSE;
+					movebutton = TRUE;
+					ControlP[picked_num].set_flag_pick(FALSE);
+					picked_num = -1;
+
+					if (TAB_LIST_FOT[0])
+					{
+						clear_dlg(hTraj_hard, DLG_p_hard, 0);
+						// в списке вывода КТ выделяем соответствующую строку
+						fail = SendDlgItemMessage(hTraj_hard, DLG_p_hard._LIST1, LB_SETCURSEL, picked_num, NULL);
+						fail = SendDlgItemMessage(hTraj_hard, DLG_p_hard._LIST2, LB_SETCURSEL, picked_num, NULL);
+						fail = SendDlgItemMessage(hTraj_hard, DLG_p_hard._LIST3, LB_SETCURSEL, picked_num, NULL);
+						fail = SendDlgItemMessage(hTraj_hard, DLG_p_hard._LIST4, LB_SETCURSEL, picked_num, NULL);
+
+						double r = *get_max_min_delta_CP(ControlP.begin(), ControlP.size(), 1) / 2;
+						SendMessage(DLG_p_hard._hSlider, TBM_SETRANGEMIN, 0, r * 0.5);
+						SendMessage(DLG_p_hard._hSlider, TBM_SETRANGEMAX, 0, r * 1.5);
+						SendMessage(DLG_p_hard._hSlider, TBM_SETPOS, TRUE, r);
+
+						UpdateWindow(hTraj_hard);
+					}
+					else if (TAB_LIST_FOT[1])
+					{
+						clear_dlg(hTraj_gate, DLG_p_gate, 1);
+						// в списке вывода КТ выделяем соответствующую строку
+						fail = SendDlgItemMessage(hTraj_gate, DLG_p_gate._LIST1, LB_SETCURSEL, picked_num, NULL);
+						fail = SendDlgItemMessage(hTraj_gate, DLG_p_gate._LIST2, LB_SETCURSEL, picked_num, NULL);
+						fail = SendDlgItemMessage(hTraj_gate, DLG_p_gate._LIST3, LB_SETCURSEL, picked_num, NULL);
+						fail = SendDlgItemMessage(hTraj_gate, DLG_p_gate._LIST4, LB_SETCURSEL, picked_num, NULL);
+
+						SendMessage(DLG_p_gate._hSlider, TBM_SETRANGEMIN, 0, GATE_METR * 0.5);
+						SendMessage(DLG_p_gate._hSlider, TBM_SETRANGEMAX, 0, GATE_METR * 1.5);
+						SendMessage(DLG_p_gate._hSlider, TBM_SETPOS, TRUE, GATE_METR);
+
+						UpdateWindow(hTraj_gate);
+					}
+
+					InvalidateRect(hChildTrajectory[0], NULL, TRUE);
+					InvalidateRect(hChildTrajectory[1], NULL, TRUE);
+					UpdateWindow(hChildTrajectory[0]);
+					UpdateWindow(hChildTrajectory[1]);
+
+					break;
+				}
+			}
+		}
+		// нет ни одной выделенной КТ
+		else
+		{
+			new_picked_num = -1;
+			// проверяем все КТ по порядку, пока не обнаружим ту, в которую попали
+			for (int i = 0; i < size; i++)
+			{
+				if (ControlP[i].check_point_xy(mx, my))
+				{
+					lbuttondown = TRUE;
+					movebutton = TRUE;
+					new_picked_num = i;
+					ControlP[new_picked_num].set_flag_pick(TRUE);
+					ControlP[new_picked_num].set_flag_move(TRUE);
+
+					if (TAB_LIST_FOT[0])
+					{
+						set_cp_to_dlg(hTraj_hard, DLG_p_hard, (ControlP.begin() + new_picked_num), 0);
+						// в списке вывода КТ выделяем соответствующую строку
+						fail = SendDlgItemMessage(hTraj_hard, DLG_p_hard._LIST1, LB_SETCURSEL, new_picked_num, NULL);
+						fail = SendDlgItemMessage(hTraj_hard, DLG_p_hard._LIST2, LB_SETCURSEL, new_picked_num, NULL);
+						fail = SendDlgItemMessage(hTraj_hard, DLG_p_hard._LIST3, LB_SETCURSEL, new_picked_num, NULL);
+						fail = SendDlgItemMessage(hTraj_hard, DLG_p_hard._LIST4, LB_SETCURSEL, new_picked_num, NULL);
+
+						double r = ControlP[new_picked_num].get_radius();
+						if (r < 1.0) r = *get_max_min_delta_CP(ControlP.begin(), ControlP.size(), 1) / 2;
+						SendMessage(DLG_p_hard._hSlider, TBM_SETRANGEMIN, 0, r * 0.5);
+						SendMessage(DLG_p_hard._hSlider, TBM_SETRANGEMAX, 0, r * 1.5);
+						SendMessage(DLG_p_hard._hSlider, TBM_SETPOS, TRUE, r);
+
+						UpdateWindow(hTraj_hard);
+					}
+					else if (TAB_LIST_FOT[1])
+					{
+						set_cp_to_dlg(hTraj_gate, DLG_p_gate, (ControlP.begin() + new_picked_num), 1);
+						// в списке вывода КТ выделяем соответствующую строку
+						fail = SendDlgItemMessage(hTraj_gate, DLG_p_gate._LIST1, LB_SETCURSEL, new_picked_num, NULL);
+						fail = SendDlgItemMessage(hTraj_gate, DLG_p_gate._LIST2, LB_SETCURSEL, new_picked_num, NULL);
+						fail = SendDlgItemMessage(hTraj_gate, DLG_p_gate._LIST3, LB_SETCURSEL, new_picked_num, NULL);
+						fail = SendDlgItemMessage(hTraj_gate, DLG_p_gate._LIST4, LB_SETCURSEL, new_picked_num, NULL);
+
+						double h = ControlP[new_picked_num].get_gate();
+						if (h < 0) h = GATE_METR;
+						SendMessage(DLG_p_gate._hSlider, TBM_SETRANGEMIN, 0, h * 0.5);
+						SendMessage(DLG_p_gate._hSlider, TBM_SETRANGEMAX, 0, h * 1.5);
+						SendMessage(DLG_p_gate._hSlider, TBM_SETPOS, TRUE, h);
+
+						UpdateWindow(hTraj_gate);
+					}
+
+					picked_num = new_picked_num;
+
+					InvalidateRect(hChildTrajectory[0], NULL, TRUE);
+					InvalidateRect(hChildTrajectory[1], NULL, TRUE);
+					UpdateWindow(hChildTrajectory[0]);
+					UpdateWindow(hChildTrajectory[1]);
+
+					break;
+				}
+				else
+				{
+					continue;
+				}
+			}
+
+			// если все КТ проверили, и ни в одну не попали
+			if (picked_num < 0)
+			{
+				lbuttondown = 0;
+				break;
+			}
+		}
+		
+		break;
+	}
+	case WM_LBUTTONUP:
+	{
+		lbuttondown = 0;
+
+		size = ControlP.size();
+		
+		// если есть выделенная КТ
+		if ((0 <= picked_num) && (picked_num < size))
+		{
+			// если ее могли сдвинуть
+			if (ControlP[picked_num].check_flag_move())
+			{
+				ControlP[picked_num].set_flag_move(FALSE);
+				
+				// запомнили выделенную КТ
+				cp = ControlP[picked_num];
+				// сортируем вектор КТ
+				i_cp = sort_control_points(ControlP.begin(), size);
+				for (int i = 0; i < size; i++)
+				{
+					ControlP[i] = *(i_cp + i);
+				}
+
+				// если выделенная КТ сместилась в векторе после сортировки
+				if (ControlP[picked_num].get_coord_x() != cp.get_coord_x())
+				{
+					// ищем новое положение выделенной КТ в векторе
+					for (int i = 0; i < size; i++)
+					{
+						if (ControlP[i].get_coord_x() == cp.get_coord_x())
+						{
+							new_picked_num = i;
+							break;
+						}
+					}
+					
+					// если КТ сместиласть влево, относительно других КТ
+					if (new_picked_num < picked_num)
+					{
+						// увеличиваем значения в списке порядка скругления 
+						for (int i = 0; i < sequence.size(); i++)
+						{
+							// между новым и старым полодением КТ
+							if ((new_picked_num < sequence[i]) && (sequence[i] <= picked_num)) sequence[i]++;
+							// новое положение смещенной КТ
+							else if (sequence[i] == picked_num + 1) sequence[i] = new_picked_num + 1;
+						}
+					}
+					// если КТ сместилась вправо, относительно других КТ
+					else if (picked_num < new_picked_num)
+					{
+						// уменьшаем знаенчия в списке порядка скругления
+						for (int i = 0; i < sequence.size(); i++)
+						{
+							// между старой и новой КТ
+							if ((picked_num + 1 < sequence[i]) && (sequence[i] <= new_picked_num + 1)) sequence[i]--;
+							// новое положение смещенной КТ
+							else if (sequence[i] == picked_num + 1) sequence[i] = new_picked_num + 1;
+						}
+					}
+
+					// переназначаем размеры "ворот", где необходимо
+					ControlP[0].set_gate(0.0);
+					for (int i = 1; i < size - 1; i++)
+					{
+						if (ControlP[i].get_gate() < 1.0) ControlP[i].set_gate(GATE_METR);
+					}
+					if (ControlP[size - 1].get_gate() < 1.0) ControlP[size - 1].set_gate(GATE_GRAD);
+
+					if (TAB_LIST_FOT[0])
+					{
+						if ((0 <= new_picked_num) && (new_picked_num < size))
+						{
+							set_cp_to_dlg(hTraj_hard, DLG_p_hard, (ControlP.begin() + new_picked_num), 0);
+						}
+						else
+						{
+							clear_dlg(hTraj_hard, DLG_p_hard, 0);
+						}
+
+						set_list_box(hTraj_hard, DLG_p_hard, ControlP.begin(), size);
+						// в списке вывода КТ выделяем соответствующую строку
+						fail = SendDlgItemMessage(hTraj_hard, DLG_p_hard._LIST1, LB_SETCURSEL, new_picked_num, NULL);
+						fail = SendDlgItemMessage(hTraj_hard, DLG_p_hard._LIST2, LB_SETCURSEL, new_picked_num, NULL);
+						fail = SendDlgItemMessage(hTraj_hard, DLG_p_hard._LIST3, LB_SETCURSEL, new_picked_num, NULL);
+						fail = SendDlgItemMessage(hTraj_hard, DLG_p_hard._LIST4, LB_SETCURSEL, new_picked_num, NULL);
+
+						double r;
+						if ((0 <= new_picked_num) && (new_picked_num < size))
+						{
+							r = ControlP[new_picked_num].get_radius();
+							if (r < 1.0) r = *get_max_min_delta_CP(ControlP.begin(), ControlP.size(), 1) / 2;
+						}
+						else
+						{
+							r = *get_max_min_delta_CP(ControlP.begin(), ControlP.size(), 1) / 2;
+						}
+						SendMessage(DLG_p_hard._hSlider, TBM_SETRANGEMIN, 0, r * 0.5);
+						SendMessage(DLG_p_hard._hSlider, TBM_SETRANGEMAX, 0, r * 1.5);
+						SendMessage(DLG_p_hard._hSlider, TBM_SETPOS, TRUE, r);
+
+						UpdateWindow(hTraj_hard);
+					}
+					else if (TAB_LIST_FOT[1])
+					{
+						if ((0 <= new_picked_num) && (new_picked_num < size))
+						{
+							set_cp_to_dlg(hTraj_gate, DLG_p_gate, (ControlP.begin() + new_picked_num), 1);
+						}
+						else
+						{
+							clear_dlg(hTraj_gate, DLG_p_gate, 1);
+						}
+
+						set_list_box(hTraj_gate, DLG_p_gate, ControlP.begin(), size);
+						// в списке вывода КТ выделяем соответствующую строку
+						fail = SendDlgItemMessage(hTraj_gate, DLG_p_gate._LIST1, LB_SETCURSEL, new_picked_num, NULL);
+						fail = SendDlgItemMessage(hTraj_gate, DLG_p_gate._LIST2, LB_SETCURSEL, new_picked_num, NULL);
+						fail = SendDlgItemMessage(hTraj_gate, DLG_p_gate._LIST3, LB_SETCURSEL, new_picked_num, NULL);
+						fail = SendDlgItemMessage(hTraj_gate, DLG_p_gate._LIST4, LB_SETCURSEL, new_picked_num, NULL);
+						
+						double h;
+						if ((0 <= new_picked_num) && (new_picked_num < size))
+						{
+							h = ControlP[new_picked_num].get_gate();
+							if (h < 1.0) h = GATE_METR;
+						}
+						else
+						{
+							h = GATE_METR;
+						}
+						SendMessage(DLG_p_gate._hSlider, TBM_SETRANGEMIN, 0, h * 0.5);
+						SendMessage(DLG_p_gate._hSlider, TBM_SETRANGEMAX, 0, h * 1.5);
+						SendMessage(DLG_p_gate._hSlider, TBM_SETPOS, TRUE, h);
+
+						UpdateWindow(hTraj_gate);
+					}
+
+					picked_num = new_picked_num;
+
+					InvalidateRect(hChildTrajectory[0], NULL, TRUE);
+					InvalidateRect(hChildTrajectory[1], NULL, TRUE);
+					UpdateWindow(hChildTrajectory[0]);
+					UpdateWindow(hChildTrajectory[1]);
+					
+					break;
+				}
+				else
+				{
+					if (!movebutton)
+					{
+
+						ControlP[picked_num].set_flag_pick(FALSE);
+						new_picked_num = -1;
+
+						if (TAB_LIST_FOT[0])
+						{
+							clear_dlg(hTraj_hard, DLG_p_hard, 0);
+
+							set_list_box(hTraj_hard, DLG_p_hard, ControlP.begin(), size);
+							// в списке вывода КТ выделяем соответствующую строку
+							fail = SendDlgItemMessage(hTraj_hard, DLG_p_hard._LIST1, LB_SETCURSEL, new_picked_num, NULL);
+							fail = SendDlgItemMessage(hTraj_hard, DLG_p_hard._LIST2, LB_SETCURSEL, new_picked_num, NULL);
+							fail = SendDlgItemMessage(hTraj_hard, DLG_p_hard._LIST3, LB_SETCURSEL, new_picked_num, NULL);
+							fail = SendDlgItemMessage(hTraj_hard, DLG_p_hard._LIST4, LB_SETCURSEL, new_picked_num, NULL);
+
+							double r = *get_max_min_delta_CP(ControlP.begin(), ControlP.size(), 1) / 2;
+							SendMessage(DLG_p_hard._hSlider, TBM_SETRANGEMIN, 0, r * 0.5);
+							SendMessage(DLG_p_hard._hSlider, TBM_SETRANGEMAX, 0, r * 1.5);
+							SendMessage(DLG_p_hard._hSlider, TBM_SETPOS, TRUE, r);
+
+							UpdateWindow(hTraj_hard);
+						}
+						else if (TAB_LIST_FOT[1])
+						{
+							clear_dlg(hTraj_gate, DLG_p_gate, 1);
+
+							set_list_box(hTraj_gate, DLG_p_gate, ControlP.begin(), size);
+							// в списке вывода КТ выделяем соответствующую строку
+							fail = SendDlgItemMessage(hTraj_gate, DLG_p_gate._LIST1, LB_SETCURSEL, new_picked_num, NULL);
+							fail = SendDlgItemMessage(hTraj_gate, DLG_p_gate._LIST2, LB_SETCURSEL, new_picked_num, NULL);
+							fail = SendDlgItemMessage(hTraj_gate, DLG_p_gate._LIST3, LB_SETCURSEL, new_picked_num, NULL);
+							fail = SendDlgItemMessage(hTraj_gate, DLG_p_gate._LIST4, LB_SETCURSEL, new_picked_num, NULL);
+
+							SendMessage(DLG_p_gate._hSlider, TBM_SETRANGEMIN, 0, GATE_METR * 0.5);
+							SendMessage(DLG_p_gate._hSlider, TBM_SETRANGEMAX, 0, GATE_METR * 1.5);
+							SendMessage(DLG_p_gate._hSlider, TBM_SETPOS, TRUE, GATE_METR);
+
+							UpdateWindow(hTraj_gate);
+						}
+						InvalidateRect(hChildTrajectory[0], NULL, TRUE);
+						InvalidateRect(hChildTrajectory[1], NULL, TRUE);
+						UpdateWindow(hChildTrajectory[0]);
+						UpdateWindow(hChildTrajectory[1]);
+					}
+					break;
+				}
+			}
+			else
+			{
+				break;
+			}
+		}
+		else
+		{
+			break;
+		}
+
+		break;
+	}
+	case WM_MOUSEMOVE:
+	{
+		// запоминаем предыдущие координаты курсора
+		pre_mx = mx;
+		pre_my = my;
+
+		size = ControlP.size();
+
+		// если зажата ЛКМ И выделена КТ из вектора (picked_num в диапазоне размера вектора)
+		if ((lbuttondown == 1) && (0 <= picked_num) && (picked_num < size))
+		{
+			// выделенную КТ можно двигать?
+			if (ControlP[picked_num].check_flag_move())
+			{
+				// определяем координаты курсора в метрах
+				x_p = GET_X_LPARAM(lParam);
+				y_p = GET_Y_LPARAM(lParam);
+				mx = ceil((x_p - delta) * k);
+				my = ceil((sy - y_p - delta) * k);
+
+				dx_p = ceil(abs(mx - pre_mx) / k);
+				dy_p = ceil(abs(my - pre_my) / k);
+
+				if ((dx_p + dy_p) > 1)
+				{
+					movebutton = TRUE;
+
+					// ограничиваем положение курсора 1й четвертью графика
+					if (mx < 0) mx = 0;
+					if (my < 0) my = 0;
+
+					// если выделена 1я КТ в векторе
+					if (picked_num == 0)
+					{
+						// в КТ изменяем только координату У, остальные статичны
+						double cp_mx = ControlP[picked_num].get_coord_x();
+						double cp_mz = ControlP[picked_num].get_coord_z();
+						ControlP[picked_num].set_coord(cp_mx, my, cp_mz);
+					}
+					// если выделена КТ из середины вектора (не превая и не последняя)
+					else if ((0 < picked_num) && (picked_num < size - 1))
+					{
+						// в КТ изменяем координаты и Х, и У
+						double cp_mz = ControlP[picked_num].get_coord_z();
+						ControlP[picked_num].set_coord(mx, my, cp_mz);
+					}
+					// если выделена последняя КТ вектора
+					else if (picked_num == size - 1)
+					{
+						// в КТ изменем только координату Х, остальные статичны
+						double cp_my = ControlP[picked_num].get_coord_y();
+						double cp_mz = ControlP[picked_num].get_coord_z();
+						ControlP[picked_num].set_coord(mx, cp_my, cp_mz);
+					}
+
+					if (TAB_LIST_FOT[0])
+					{
+						set_cp_to_dlg(hTraj_hard, DLG_p_hard, (ControlP.begin() + picked_num), 0);
+						set_list_box(hTraj_hard, DLG_p_hard, ControlP.begin(), size);
+						// в списке вывода КТ выделяем соответствующую строку
+						fail = SendDlgItemMessage(hTraj_hard, DLG_p_hard._LIST1, LB_SETCURSEL, picked_num, NULL);
+						fail = SendDlgItemMessage(hTraj_hard, DLG_p_hard._LIST2, LB_SETCURSEL, picked_num, NULL);
+						fail = SendDlgItemMessage(hTraj_hard, DLG_p_hard._LIST3, LB_SETCURSEL, picked_num, NULL);
+						fail = SendDlgItemMessage(hTraj_hard, DLG_p_hard._LIST4, LB_SETCURSEL, picked_num, NULL);
+
+						UpdateWindow(hTraj_hard);
+					}
+					else if (TAB_LIST_FOT[1])
+					{
+						set_cp_to_dlg(hTraj_gate, DLG_p_gate, (ControlP.begin() + picked_num), 1);
+						set_list_box(hTraj_gate, DLG_p_gate, ControlP.begin(), size);
+						// в списке вывода КТ выделяем соответствующую строку
+						fail = SendDlgItemMessage(hTraj_gate, DLG_p_gate._LIST1, LB_SETCURSEL, picked_num, NULL);
+						fail = SendDlgItemMessage(hTraj_gate, DLG_p_gate._LIST2, LB_SETCURSEL, picked_num, NULL);
+						fail = SendDlgItemMessage(hTraj_gate, DLG_p_gate._LIST3, LB_SETCURSEL, picked_num, NULL);
+						fail = SendDlgItemMessage(hTraj_gate, DLG_p_gate._LIST4, LB_SETCURSEL, picked_num, NULL);
+
+						UpdateWindow(hTraj_gate);
+					}
+
+					InvalidateRect(hChildTrajectory[0], NULL, TRUE);
+					UpdateWindow(hChildTrajectory[0]);
+
+					if (pre_mx != mx)
+					{
+						InvalidateRect(hChildTrajectory[1], NULL, TRUE);
+						UpdateWindow(hChildTrajectory[1]);
+					}
+				}
+			}
+			else
+			{
+				break;
+			}
+		}
+		else 
+		{
+			break;
+		}
+		
+		break;
+	}
+	case WM_RBUTTONDOWN:
+	{
+		// определяем координаты курсора в метрах
+		x_p = GET_X_LPARAM(lParam);
+		y_p = GET_Y_LPARAM(lParam);
+		mx = ceil((x_p - delta) * k);
+		my = ceil((sy - y_p - delta) * k);
+
+		// проверяем, есть ли хоть одна выделенная КТ
+		size = ControlP.size();
+		for (int i = 0; i < size; i++)
+		{
+			if (ControlP[i].check_flag_pick())
+			{
+				ControlP[i].set_flag_pick(FALSE);
+				break;
+			}
+		}
+
+		cp.set_coord(mx, my, 0);
+		cp.set_number(size + 1);
+		cp.set_flag_pick(TRUE);
+		ControlP.emplace_back(cp);
+		size++;
+
+		i_cp = sort_control_points(ControlP.begin(), size);
+		for (int i = 0; i < size; i++)
+		{
+			ControlP[i] = *(i_cp + i);
+			if (ControlP[i].check_flag_pick()) picked_num = i;
+		}
+
+		// корректируем список порядка скругления 
+		for (int i = 0; i < sequence.size(); i++)
+		{
+			if ((picked_num < sequence[i])) sequence[i]++;
+		}
+		
+		// переназначаем размеры "ворот", где необходимо
+		ControlP[0].set_gate(0.0);
+		for (int i = 1; i < size - 1; i++)
+		{
+			if (ControlP[i].get_gate() < 1.0) ControlP[i].set_gate(GATE_METR);
+		}
+		if (ControlP[size - 1].get_gate() < 1.0) ControlP[size - 1].set_gate(GATE_GRAD);
+
+		if (TAB_LIST_FOT[0])
+		{
+			set_cp_to_dlg(hTraj_hard, DLG_p_hard, (ControlP.begin() + picked_num), 0);
+
+			set_list_box(hTraj_hard, DLG_p_hard, ControlP.begin(), size);
+			// в списке вывода КТ выделяем соответствующую строку
+			fail = SendDlgItemMessage(hTraj_hard, DLG_p_hard._LIST1, LB_SETCURSEL, picked_num, NULL);
+			fail = SendDlgItemMessage(hTraj_hard, DLG_p_hard._LIST2, LB_SETCURSEL, picked_num, NULL);
+			fail = SendDlgItemMessage(hTraj_hard, DLG_p_hard._LIST3, LB_SETCURSEL, picked_num, NULL);
+			fail = SendDlgItemMessage(hTraj_hard, DLG_p_hard._LIST4, LB_SETCURSEL, picked_num, NULL);
+
+			double r = *get_max_min_delta_CP(ControlP.begin(), ControlP.size(), 1) / 2;
+			SendMessage(DLG_p_hard._hSlider, TBM_SETRANGEMIN, 0, r * 0.5);
+			SendMessage(DLG_p_hard._hSlider, TBM_SETRANGEMAX, 0, r * 1.5);
+			SendMessage(DLG_p_hard._hSlider, TBM_SETPOS, TRUE, r);
+
+			UpdateWindow(hTraj_hard);
+		}
+		else if (TAB_LIST_FOT[1])
+		{
+			set_cp_to_dlg(hTraj_gate, DLG_p_gate, (ControlP.begin() + picked_num), 1);
+
+			set_list_box(hTraj_gate, DLG_p_gate, ControlP.begin(), size);
+			// в списке вывода КТ выделяем соответствующую строку
+			fail = SendDlgItemMessage(hTraj_gate, DLG_p_gate._LIST1, LB_SETCURSEL, picked_num, NULL);
+			fail = SendDlgItemMessage(hTraj_gate, DLG_p_gate._LIST2, LB_SETCURSEL, picked_num, NULL);
+			fail = SendDlgItemMessage(hTraj_gate, DLG_p_gate._LIST3, LB_SETCURSEL, picked_num, NULL);
+			fail = SendDlgItemMessage(hTraj_gate, DLG_p_gate._LIST4, LB_SETCURSEL, picked_num, NULL);
+
+			double h = ControlP[picked_num].get_gate();
+			if (h < 0) h = GATE_METR;
+			SendMessage(DLG_p_gate._hSlider, TBM_SETRANGEMIN, 0, h * 0.5);
+			SendMessage(DLG_p_gate._hSlider, TBM_SETRANGEMAX, 0, h * 1.5);
+			SendMessage(DLG_p_gate._hSlider, TBM_SETPOS, TRUE, h);
+
+			UpdateWindow(hTraj_gate);
+		}
+
+		InvalidateRect(hChildTrajectory[0], NULL, TRUE);
+		InvalidateRect(hChildTrajectory[1], NULL, TRUE);
+		UpdateWindow(hChildTrajectory[0]);
+		UpdateWindow(hChildTrajectory[1]);
+
+		break;
+	}
+	case WM_PAINT:
+	{
+		size = ControlP.size();
+
+		if (FLAG_BUILD && (size > 1))
+		{
+			hdc = BeginPaint(hWnd, &ps);
+
+			if (TAB_LIST_FOT[0])
+			{
+				build_str = build_traj(GetParent(hWnd), ControlP.begin(), ControlP.size(), sequence.begin(), sequence.size());
+
+				if (build_str.if_build)
+				{
+					if (!TrajC.empty()) std::vector<Trajectory_coord>().swap(TrajC);
+
+					for (UINT i = 0; i < build_str.traj_size; i++) TrajC.push_back(*(build_str.traj_i + i));
+
+					if (sequence.size() > build_str.seq_size)
+					{
+						sequence.pop_back();
+						for (size_t i = 0; i < build_str.seq_size; i++)
+						{
+							sequence.push_back(*(build_str.seq_i + i));
+						}
+					}
+
+					// задание параметров окна вывода (размеры и оси)
+					fail = SetMapMode(hdc, MM_ISOTROPIC);
+					fail = SetWindowExtEx(hdc, ceil(max_x + 2 * delta * k), ceil(-(max_y + 2 * delta * k)), NULL);
+					fail = SetViewportExtEx(hdc, (sx), ceil(max_y / k + 2 * delta), NULL);
+					fail = SetViewportOrgEx(hdc, (delta), (sy - delta), NULL);
+
+
+					if (FLAG_CIRCULE)
+					{
+						SelectObject(hdc, hPen_circle);
+						for (int i = 0; i < TrajC.size(); i++)
+							if (TrajC[i].r) Ellipse(hdc, TrajC[i].x_c - TrajC[i].r, TrajC[i].y_c + TrajC[i].r, TrajC[i].x_c + TrajC[i].r, TrajC[i].y_c - TrajC[i].r);
+						SelectObject(hdc, hPen_delete);
+						Rectangle(hdc, 0, 0, ceil(max_x + delta * k), ceil(-delta * k));
+						Rectangle(hdc, ceil(-delta * k), ceil(max_y + k * delta), 0, ceil(-delta * k));
+						Rectangle(hdc, ceil(-delta * k), 2 * max_y, ceil(max_x + k * delta), ceil(max_y + k * delta));
+					}
+
+					// прорисовка осей координат
+					SelectObject(hdc, hPen_axes);
+					MoveToEx(hdc, 0, ceil(-delta * k), NULL);
+					LineTo(hdc, 0, ceil(max_y + delta * k));
+					MoveToEx(hdc, ceil(-delta * k), 0, NULL);
+					LineTo(hdc, ceil(max_x + delta * k), 0);
+
+					// создаем шрифты для подписей по осям х и у
+					yFont = CreateFont(ceil(delta * k / 2), 0, 3 * 900, 0, 400, 0, 0, 0, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, OUT_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH | FF_DONTCARE, _T("Arial"));
+					xFont = CreateFont(ceil(delta * k / 2), 0, 0, 0, 400, 0, 0, 0, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, OUT_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH | FF_DONTCARE, _T("Arial"));
+
+					print_sub_grid(hdc, xFont, yFont, hPen_grid, hPen_axes, X, Y, koef, delta, FLAG_GRID, 0, 0);
+
+					SelectObject(hdc, xFont);
+					TextOut(hdc, ceil(X[0]), ceil((delta - 5) * k), LPCWSTR(buff_x), 4);
+					TextOut(hdc, (5 * k), (Y[0] + k * (delta - 5)), LPCWSTR(buff_y), 4);
+
+					// вывод "графика"
+					SelectObject(hdc, hPen_coord);
+					fail = MoveToEx(hdc, ceil(TrajC[1].x1), ceil(TrajC[1].y1), NULL);
+
+					for (int x = 0; x <= max_x; x = x + 100) LineTo(hdc, x, ceil(print_traj_vadim(x, TrajC.begin(), TrajC.size())));
+
+					// выделение КТ (выбрана/невыбрана)
+					for (UINT i = 0; i < (size); i++)
+					{
+						if (ControlP[i].check_flag_pick()) SelectObject(hdc, hBrush_point_pick);
+						else SelectObject(hdc, hBrush_point_unpick);
+						Ellipse(hdc, ceil(ControlP[i].get_coord_x() - k * 5), ceil(ControlP[i].get_coord_y() + k * 5), ceil(ControlP[i].get_coord_x() + k * 5), ceil(ControlP[i].get_coord_y() - k * 5));
+					}
+
+				}
+				else
+				{
+					if (sequence.size() > build_str.seq_size)
+					{
+						sequence.pop_back();
+						for (size_t i = 0; i < build_str.seq_size; i++)
+						{
+							sequence.push_back(*(build_str.seq_i + i));
+						}
+					}
+					ShowWindow(GetParent(hWnd), SW_NORMAL);
+				}
+
+			}
+
+			else if (TAB_LIST_FOT[1])
+			{
+
+				for (int i = 0; i < size; i++)
+				{
+					if (i == 0)
+					{
+						if (ControlP[i].get_gate() != 0) ControlP[i].set_gate(0);
+					}
+					else if (i == size - 1)
+					{
+						if (ControlP[i].get_gate() == 0) ControlP[i].set_gate(10);
+					}
+					else
+					{
+						if (ControlP[i].get_gate() == 0) ControlP[i].set_gate(250);
+					}
+				}
+
+				// задание параметров окна вывода (размеры и оси)
+				fail = SetMapMode(hdc, MM_ISOTROPIC);
+				fail = SetWindowExtEx(hdc, ceil(max_x + 2 * delta * k), ceil(-(max_y + 2 * delta * k)), NULL);
+				fail = SetViewportExtEx(hdc, (sx), ceil(max_y / k + 2 * delta), NULL);
+				fail = SetViewportOrgEx(hdc, (delta), (sy - delta), NULL);
+
+				// прорисовка осей координат
+				SelectObject(hdc, hPen_axes);
+				MoveToEx(hdc, 0, ceil(-delta * k), NULL);
+				LineTo(hdc, 0, ceil(max_y + delta * k));
+				MoveToEx(hdc, ceil(-delta * k), 0, NULL);
+				LineTo(hdc, ceil(max_x + delta * k), 0);
+
+				// создаем шрифты для подписей по осям х и у
+				yFont = CreateFont(ceil(delta * k / 2), 0, 3 * 900, 0, 400, 0, 0, 0, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, OUT_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH | FF_DONTCARE, _T("Arial"));
+				xFont = CreateFont(ceil(delta * k / 2), 0, 0, 0, 400, 0, 0, 0, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, OUT_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH | FF_DONTCARE, _T("Arial"));
+
+				print_sub_grid(hdc, xFont, yFont, hPen_grid, hPen_axes, X, Y, koef, delta, FLAG_GRID, 0, 0);
+
+				SelectObject(hdc, xFont);
+				TextOut(hdc, ceil(X[0]), ceil((delta - 5) * k), LPCWSTR(buff_x), 4);
+				TextOut(hdc, (5 * k), (Y[0] + k * (delta - 5)), LPCWSTR(buff_y), 4);
+
+				// вывод "графика"
+				SelectObject(hdc, hPen_add);
+				fail = MoveToEx(hdc, ceil(ControlP[0].get_coord_x()), ceil(ControlP[0].get_coord_y()), NULL);
+
+				size = ControlP.size();
+				for (int i = 1; i < size - 1; i++) LineTo(hdc, ceil(ControlP[i].get_coord_x()), ceil(ControlP[i].get_coord_y() + ControlP[i].get_gate()));
+				LineTo(hdc, ceil(ControlP[size - 1].get_coord_x()), ceil(ControlP[size - 1].get_coord_y()));
+
+				for (int i = size - 2; i > 0; i--) LineTo(hdc, ceil(ControlP[i].get_coord_x()), ceil(ControlP[i].get_coord_y() - ControlP[i].get_gate()));
+				LineTo(hdc, ceil(ControlP[0].get_coord_x()), ceil(ControlP[0].get_coord_y()));
+
+				SelectObject(hdc, hPen_add);
+				for (int i = 1; i < size - 1; i++)
+				{
+					fail = MoveToEx(hdc, ceil(ControlP[i].get_coord_x()), ceil(ControlP[i].get_coord_y() + ControlP[i].get_gate()), NULL);
+					LineTo(hdc, ceil(ControlP[i].get_coord_x()), ceil(ControlP[i].get_coord_y() - ControlP[i].get_gate()));
+				}
+				double l = (*(ControlP.end() - 2)).get_coord_y() / 3;
+				if (l < 500) l = 500;
+				double x = cos(((*(ControlP.end() - 1)).get_tetta_grad() + (*(ControlP.end() - 1)).get_gate()) * PI / 180) * l;
+				double y = sin(((*(ControlP.end() - 1)).get_tetta_grad() + (*(ControlP.end() - 1)).get_gate()) * PI / 180) * l;
+				MoveToEx(hdc, (*(ControlP.end() - 1)).get_coord_x(), (*(ControlP.end() - 1)).get_coord_y(), NULL);
+				LineTo(hdc, X[0] - x, Y[1] - y);
+				x = cos(((*(ControlP.end() - 1)).get_tetta_grad() - (*(ControlP.end() - 1)).get_gate()) * PI / 180) * l;
+				y = sin(((*(ControlP.end() - 1)).get_tetta_grad() - (*(ControlP.end() - 1)).get_gate()) * PI / 180) * l;
+				MoveToEx(hdc, (*(ControlP.end() - 1)).get_coord_x(), (*(ControlP.end() - 1)).get_coord_y(), NULL);
+				LineTo(hdc, X[0] - x, Y[1] - y);
+
+				// выделение КТ (выбрана/невыбрана)
+				for (UINT i = 0; i < (size); i++)
+				{
+					if (ControlP[i].check_flag_pick()) SelectObject(hdc, hBrush_point_pick);
+					else SelectObject(hdc, hBrush_point_unpick);
+					Ellipse(hdc, ceil(ControlP[i].get_coord_x() - k * 5), ceil(ControlP[i].get_coord_y() + k * 5), ceil(ControlP[i].get_coord_x() + k * 5), ceil(ControlP[i].get_coord_y() - k * 5));
+				}
+			}
+
+			EndPaint(hWnd, &ps);
+		}
+		break;
+	}
+	default: return DefWindowProc(hWnd, message, wParam, lParam);
+	}
+	return FALSE;
+}
