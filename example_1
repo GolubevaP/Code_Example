@@ -1,0 +1,225 @@
+#include <stdio.h>
+#include <tchar.h>
+
+#include <map>
+#include <vector>
+
+#include <ctime>
+#include <list>
+#include <iostream>
+
+
+template <typename Container>
+/*	Заполняет контейнер value (размер size) значениями типа int. */
+void fillContainer(Container &value, size_t size)
+{
+	// заполняем контейнер value, размера size значениями от 1 до 9
+	for (size_t i = 0; i < size; i++)
+	{
+		value[i] = rand() % 9 + 1;
+	}
+}
+
+
+template <typename Container, typename Iterator>
+/*	Удаляет из контейнера value, с началом в it, элементы, 
+	порядковые номера которых соответствуют занчениям списка list. */
+void clearContainer(Container &value, Iterator it, std::list<int> list)
+{
+	// удаляем из контейнера value, с началом в it, элементы списка list
+	for (auto rit_l = list.rbegin(); rit_l != list.rend(); rit_l++)
+	{
+		value.erase(it + *rit_l);
+	}
+}
+
+
+/*	Заполнение списка случайными элементами для удаления из контейнера размером container_size.
+	Возвращает список значений типа int. */
+std::list<int> fillDeleteList(int container_size)
+{
+	std::list<int> list_del;
+	size_t size_del;
+
+	int max_del = container_size > 15 ? 15 : container_size - 1;
+	if (max_del == 0)
+		return list_del;
+
+	// количество элементов на удаление - не более 15, и менее размера самого контейнера
+	size_del = rand() % max_del + 1;
+
+
+	// заполняем список элементов на удаление
+	for (size_t i = 0; i < size_del; i++)
+	{
+		// значения в списке не должны превышать количество элементов контейнера
+		list_del.push_back(rand() % container_size);
+	}
+
+	// сортируем список
+	list_del.sort();
+
+	// удаляем повторяющиеся элементы
+	list_del.unique();
+
+	return list_del;
+}
+
+
+/*	Удаляет из контейнеров случайное количество элементов. */
+void deleteSomeElements(std::vector<int> &_v, std::map<int, int> &_m)
+{
+	// создаем список элементов на удаление из контейнера vector
+	std::list<int> list_del_v = fillDeleteList(_v.size());
+
+	// удаляем список элементов list_del_v из контенер vector
+	auto it_v = _v.begin();
+	clearContainer(_v, it_v, list_del_v);
+
+	// создаем список элементов на удаление из контейнера map
+	std::list<int> list_del_m = fillDeleteList(_m.size());
+
+	// удаляем список элементов list_del_m из контейнера map
+	auto it_m = _m.begin()->first;
+	clearContainer(_m, it_m, list_del_m);
+}
+
+
+/*  Сравнивает элементы value_a и value_b.
+	Возвращает TRUE, если элементы равны, иначе - FALSE. */
+bool equal(int value_a, int value_b)
+{
+	// сравниваем два элемента типа int
+	return value_a == value_b;
+}
+
+
+template <typename ContainerA, typename ContainerB>
+/*	Ищет элементы контейнера value_a, которым нет эквивалентных значений в контейнере value_b.
+	Возвращает список порядковых номеров этих элементов. */
+std::list<int> checkContainer(ContainerA &value_a, ContainerB value_b)
+{
+	bool eq = false;
+
+	// список для хранения номеров элементов, которые надо удалить
+	std::list<int> list;
+
+	size_t value_a_size = value_a.size();
+	size_t value_b_size = value_b.size();
+	// сравнение элементов контейнера value_a с элементами контейнера value_b
+	for (size_t i = 0; i < value_a_size; i++)
+	{
+		for (size_t j = 0; j < value_b_size; j++)
+		{
+			if (equal(value_a[i], value_b[j]))
+			{
+				eq = true;
+				break;
+			}
+		}
+
+		// если нет эквивалента, запоминаем номер элемента
+		if (!eq)
+			list.push_back(i);
+
+		eq = false;
+	}
+
+	return list;
+
+}
+
+
+/*	Сравнение элементов контейнера _v и _m. Удаление недублирующихся элементов. */
+void synchronization(std::vector<int> &_v, std::map<int, int> &_m)
+{
+	// проверка контейнера vector
+	std::list<int> list_v = checkContainer(_v, _m);
+
+
+	// удаляем элементы из контенер vector
+	auto it_v = _v.begin();
+	clearContainer(_v, it_v, list_v);
+
+
+	// если в первом контейнере не осталось элементов, очищаем и второй
+	if (_v.empty())
+	{
+		_m.clear();
+		return;
+	}
+
+	// проверка контейнера map
+	std::list<int> list_m = checkContainer(_m, _v);
+	// удаляем элементы из контейнера map
+	auto it_m = _m.begin()->first;
+	clearContainer(_m, it_m, list_m);
+}
+
+
+
+int main()
+{
+	srand(time(0));
+
+	size_t size_v = rand() % 50 + 1;
+	size_t size_m = rand() % 50 + 1;
+
+	// объявляем контейнеры
+	std::vector<int> _v(size_v);
+	std::map<int, int> _m;
+
+	// заполняем контейнеры
+	fillContainer(_v, size_v);
+	fillContainer(_m, size_m);
+
+
+	// !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	std::cout << "Filling containers\n" << "Container vector:\n";
+	for (auto it = begin(_v); it != end(_v); it++)
+		std::cout << *it << " ";
+	std::cout << std::endl;
+
+	std::cout << "Container map:\n";
+	for (auto it = begin(_m); it != end(_m); it++)
+		std::cout << it->second << " ";
+	std::cout << std::endl << std::endl;
+	// !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+
+	// удаляем случайные элементы из контейнеров
+	deleteSomeElements(_v, _m);
+
+
+	// !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	std::cout << "Delete some elements\n" << "Container vector:\n";
+	for (auto it = begin(_v); it != end(_v); it++)
+		std::cout << *it << " ";
+	std::cout << std::endl;
+
+	std::cout << "Container map:\n";
+	for (auto it = begin(_m); it != end(_m); it++)
+		std::cout << it->second << " ";
+	std::cout << std::endl << std::endl;
+	// !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+
+	// проводим синхронизацию
+	synchronization(_v, _m);
+
+
+	// !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	std::cout << "Synchronization\n" << "Container vector:\n";
+	for (auto it = begin(_v); it != end(_v); it++)
+		std::cout << *it << " ";
+	std::cout << std::endl;
+
+	std::cout << "Container map:\n";
+	for (auto it = begin(_m); it != end(_m); it++)
+		std::cout << it->second << " ";
+	std::cout << std::endl << std::endl;
+	// !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+    return 0;
+}
+
