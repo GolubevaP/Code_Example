@@ -1,0 +1,682 @@
+#include "stdafx.h"
+#include "CKtoCK.h"
+
+#define MAX_LOADSTRING 100
+
+// Global Variables:
+HINSTANCE hInst;                                // current instance
+WCHAR szTitle[MAX_LOADSTRING];                  // The title bar text
+WCHAR szWindowClass[MAX_LOADSTRING];            // the main window class name
+
+// Forward declarations of functions included in this code module:
+ATOM                MyRegisterClass(HINSTANCE hInstance);
+BOOL                InitInstance(HINSTANCE, int);
+LRESULT CALLBACK    WndProc(HWND, UINT, WPARAM, LPARAM);
+INT_PTR CALLBACK    About(HWND, UINT, WPARAM, LPARAM);
+
+HWND hDLG;
+INT_PTR CALLBACK CK42toNZ(HWND, UINT, WPARAM, LPARAM);
+RECT dlgtopix = { 0, 0, 322, 255 };
+
+float pi = 3.141592653589793238;
+
+BOOL PEREVOD_TYPE = 1;
+
+
+coord* CK42_to_NZ(blh CK42_0, blh CK42_ti, double azim_deg);
+blh NZ_to_CK42(blh CK42_0, coord *NZ_ti, double azim_rad);
+coord Povorot_NZ_na_AZIM(coord NZ, double H_0, double azim_deg);
+coord Povorot_Tr_na_AZIM_to_NZ(coord Tr, double H_0, double azim_rad);
+
+double GetParamFromEditBox(HWND hDlg, int IDC, int point = 8);
+
+int DisplayWarningMessageBox(HWND hWnd, LPCWSTR text, LPCWSTR caption);
+
+
+
+int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
+                     _In_opt_ HINSTANCE hPrevInstance,
+                     _In_ LPWSTR    lpCmdLine,
+                     _In_ int       nCmdShow)
+{
+    UNREFERENCED_PARAMETER(hPrevInstance);
+    UNREFERENCED_PARAMETER(lpCmdLine);
+
+    // TODO: Place code here.
+
+    // Initialize global strings
+    LoadStringW(hInstance, IDS_APP_TITLE, szTitle, MAX_LOADSTRING);
+    LoadStringW(hInstance, IDC_CKTOCK, szWindowClass, MAX_LOADSTRING);
+    MyRegisterClass(hInstance);
+
+    // Perform application initialization:
+    if (!InitInstance (hInstance, nCmdShow))
+    {
+        return FALSE;
+    }
+
+    HACCEL hAccelTable = LoadAccelerators(hInstance, MAKEINTRESOURCE(IDC_CKTOCK));
+
+    MSG msg;
+
+    // Main message loop:
+    while (GetMessage(&msg, nullptr, 0, 0))
+    {
+        if (!TranslateAccelerator(msg.hwnd, hAccelTable, &msg))
+        {
+			if (!IsDialogMessage(hDLG, &msg))
+			{
+				TranslateMessage(&msg);
+				DispatchMessage(&msg);
+			}
+        }
+    }
+
+    return (int) msg.wParam;
+}
+
+
+//
+//  FUNCTION: MyRegisterClass()
+//
+//  PURPOSE: Registers the window class.
+//
+ATOM MyRegisterClass(HINSTANCE hInstance)
+{
+    WNDCLASSEXW wcex;
+
+    wcex.cbSize = sizeof(WNDCLASSEX);
+
+    wcex.style          = CS_HREDRAW | CS_VREDRAW;
+    wcex.lpfnWndProc    = WndProc;
+    wcex.cbClsExtra     = 0;
+    wcex.cbWndExtra     = 0;
+    wcex.hInstance      = hInstance;
+    wcex.hIcon          = LoadIcon(hInstance, MAKEINTRESOURCE(IDI_CKTOCK));
+    wcex.hCursor        = LoadCursor(nullptr, IDC_ARROW);
+    wcex.hbrBackground  = (HBRUSH)(COLOR_WINDOW+1);
+    wcex.lpszMenuName   = MAKEINTRESOURCEW(IDC_CKTOCK);
+    wcex.lpszClassName  = szWindowClass;
+    wcex.hIconSm        = LoadIcon(wcex.hInstance, MAKEINTRESOURCE(IDI_SMALL));
+
+    return RegisterClassExW(&wcex);
+}
+
+//
+//   FUNCTION: InitInstance(HINSTANCE, int)
+//
+//   PURPOSE: Saves instance handle and creates main window
+//
+//   COMMENTS:
+//
+//        In this function, we save the instance handle in a global variable and
+//        create and display the main program window.
+//
+BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
+{
+   hInst = hInstance; // Store instance handle in our global variable
+
+   HWND hWnd = CreateWindowW(szWindowClass, szTitle, WS_OVERLAPPEDWINDOW,
+      CW_USEDEFAULT, 0, CW_USEDEFAULT, 0, nullptr, nullptr, hInstance, nullptr);
+
+   if (!hWnd)
+   {
+      return FALSE;
+   }
+
+   ShowWindow(hWnd, nCmdShow);
+   UpdateWindow(hWnd);
+
+   return TRUE;
+}
+
+//
+//  FUNCTION: WndProc(HWND, UINT, WPARAM, LPARAM)
+//
+//  PURPOSE:  Processes messages for the main window.
+//
+//  WM_COMMAND  - process the application menu
+//  WM_PAINT    - Paint the main window
+//  WM_DESTROY  - post a quit message and return
+//
+//
+LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+
+    switch (message)
+    {
+	case WM_CREATE:
+	{
+		hDLG = CreateDialog(hInst, MAKEINTRESOURCE(IDD_DIALOG2), hWnd, CK42toNZ);
+		MapDialogRect(hDLG, &dlgtopix);
+		
+		MoveWindow(hWnd, 100, 100, (dlgtopix.right - dlgtopix.left + 10), (dlgtopix.bottom - dlgtopix.top + 60), TRUE);
+		UpdateWindow(hWnd);
+	}
+
+	case WM_SIZE:
+	{
+		
+		ShowWindow(hDLG, SW_SHOWNORMAL);
+		UpdateWindow(hDLG);
+	}
+    case WM_COMMAND:
+        {
+            int wmId = LOWORD(wParam);
+            // Parse the menu selections:
+            switch (wmId)
+            {
+			case ID_CK42toTR:
+			{
+				if (PEREVOD_TYPE == 1)
+				{
+					SetDlgItemText(hDLG, IDC_TEXT_TITLE, _T("ПЕРЕВОД ИЗ СК-42 В ТРАЕКТОРНУЮ СК"));
+					SetDlgItemText(hDLG, IDC_TEXT_CK42TI, _T("Точка интереса (CK-42)"));
+					SetDlgItemText(hDLG, IDC_TEXT_NZM7, _T("Точка М7 (НЗСК)"));
+					SetDlgItemText(hDLG, IDC_TEXT_TRTI, _T("Точка интереса (ТрСК)"));
+					SetDlgItemText(hDLG, IDC_TEXT_TRM7, _T("Точка М7 (ТрСК)"));
+					SetDlgItemText(hDLG, IDC_TEXT_BTI, _T("Bти"));
+					SetDlgItemText(hDLG, IDC_TEXT_LTI, _T("Lти"));
+					SetDlgItemText(hDLG, IDC_TEXT_HTI, _T("Hти"));
+					SetDlgItemText(hDLG, IDC_TEXT_XTI, _T("Xти"));
+					SetDlgItemText(hDLG, IDC_TEXT_YTI, _T("Yти"));
+					SetDlgItemText(hDLG, IDC_TEXT_ZTI, _T("Zти"));
+					SetDlgItemText(hDLG, IDC_TEXT_TI1, _T("рад"));
+					SetDlgItemText(hDLG, IDC_TEXT_TI2, _T("рад"));
+					SetDlgItemText(hDLG, IDC_TEXT_TI3, _T("м"));
+					SetDlgItemText(hDLG, IDC_TEXT_TI4, _T("м"));
+
+          // очищаем элементы диалога
+					for (int idc = 1000; idc < 1003; idc++)
+					{
+						SetDlgItemText(hDLG, idc, NULL);
+					}
+					for (int idc = 1009; idc < 1022; idc++)
+					{
+						SetDlgItemText(hDLG, idc, NULL);
+					}
+
+					PEREVOD_TYPE = 0;
+				}
+				break;
+			}
+			case ID_TRtoCK42:
+			{
+				if (PEREVOD_TYPE == 0)
+				{
+					SetDlgItemText(hDLG, IDC_TEXT_TITLE, _T("ПЕРЕВОД ИЗ ТРАЕКТОРНОЙ СК В СК-42"));
+					SetDlgItemText(hDLG, IDC_TEXT_TRTI, _T("Точка интереса (CK-42)"));
+					SetDlgItemText(hDLG, IDC_TEXT_TRM7, _T("Точка М7 (НЗСК)"));
+					SetDlgItemText(hDLG, IDC_TEXT_CK42TI, _T("Точка интереса (ТрСК)"));
+					SetDlgItemText(hDLG, IDC_TEXT_NZM7, _T("Точка М7 (ТрСК)"));
+					SetDlgItemText(hDLG, IDC_TEXT_XTI, _T("Bти"));
+					SetDlgItemText(hDLG, IDC_TEXT_YTI, _T("Lти"));
+					SetDlgItemText(hDLG, IDC_TEXT_ZTI, _T("Hти"));
+					SetDlgItemText(hDLG, IDC_TEXT_BTI, _T("Xти"));
+					SetDlgItemText(hDLG, IDC_TEXT_LTI, _T("Yти"));
+					SetDlgItemText(hDLG, IDC_TEXT_HTI, _T("Zти"));
+					SetDlgItemText(hDLG, IDC_TEXT_TI3, _T("рад"));
+					SetDlgItemText(hDLG, IDC_TEXT_TI4, _T("рад"));
+					SetDlgItemText(hDLG, IDC_TEXT_TI1, _T("м"));
+					SetDlgItemText(hDLG, IDC_TEXT_TI2, _T("м"));
+
+          // очищаем элементы диалога
+					for (int idc = 1000; idc < 1003; idc++)
+					{
+						SetDlgItemText(hDLG, idc, NULL);
+					}
+
+					for (int idc = 1009; idc < 1022; idc++)
+					{
+						SetDlgItemText(hDLG, idc, NULL);
+					}
+
+					PEREVOD_TYPE = 1;
+				}
+				break;
+			}
+            case IDM_ABOUT:
+                DialogBox(hInst, MAKEINTRESOURCE(IDD_ABOUTBOX), hWnd, About);
+                break;
+            case IDM_EXIT:
+                DestroyWindow(hWnd);
+                break;
+            default:
+                return DefWindowProc(hWnd, message, wParam, lParam);
+            }
+        }
+        break;
+    case WM_PAINT:
+        {
+            PAINTSTRUCT ps;
+            HDC hdc = BeginPaint(hWnd, &ps);
+            // TODO: Add any drawing code that uses hdc here...
+            EndPaint(hWnd, &ps);
+        }
+        break;
+    case WM_DESTROY:
+        PostQuitMessage(0);
+        break;
+    default:
+        return DefWindowProc(hWnd, message, wParam, lParam);
+    }
+    return 0;
+}
+
+
+
+INT_PTR CALLBACK CK42toNZ(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
+{
+
+	static TCHAR name[256] = _T("");
+	static OPENFILENAME file;
+
+	static HANDLE hFile;
+
+	static std::vector<std::string> str;
+	std::ifstream in;
+	std::string s;
+
+
+	static blh CK42_ti;
+	static blh CK42_0;
+	static coord NZ_M7;
+
+	static double Vx_ts;
+	static double Vz_ts;
+	static double AZIM;
+
+	static double H_ts;
+
+	static coord Tr_ti;
+	static coord NZ_ti;
+	static coord Tr_M7;
+	static double PROMAH;
+	static coord dTraj;
+	char ch[20];
+	char* ch_1;
+
+	switch (message)
+	{
+	case WM_INITDIALOG:
+	{
+		file.lStructSize = sizeof(OPENFILENAME);
+		file.hInstance = hInst;
+		file.lpstrFilter = _T("Text\0*.txt\0Все файлы\0*.*");
+		file.lpstrFile = name;
+		file.nMaxFile = 256;
+		file.lpstrInitialDir = _T(".\\");
+		file.lpstrDefExt = _T("txt");
+		break;
+	}
+	case WM_COMMAND:
+		switch (LOWORD(wParam))
+		{
+		case IDC_PEREVOD:
+		{
+			if (PEREVOD_TYPE == 0)
+			{
+				// Получаем данные для перевода
+				CK42_ti.B = GetParamFromEditBox(hDlg, IDC_B_TI, 12);
+				CK42_ti.L = GetParamFromEditBox(hDlg, IDC_L_TI, 12);
+				CK42_ti.H = GetParamFromEditBox(hDlg, IDC_H_TI);
+
+				CK42_0.B = GetParamFromEditBox(hDlg, IDC_B_TS, 12);
+				CK42_0.L = GetParamFromEditBox(hDlg, IDC_L_TS, 12);
+				H_ts = GetParamFromEditBox(hDlg, IDC_H_TS);
+				CK42_0.H = H_ts;
+
+				NZ_M7.x = GetParamFromEditBox(hDlg, IDC_X_NZM7);
+				NZ_M7.y = GetParamFromEditBox(hDlg, IDC_Y_NZM7);
+				NZ_M7.z = GetParamFromEditBox(hDlg, IDC_Z_NZM7);
+
+				Vx_ts = GetParamFromEditBox(hDlg, IDC_VX);
+				Vz_ts = GetParamFromEditBox(hDlg, IDC_VZ);
+
+
+				// Считаем...
+
+				AZIM = atan2(Vz_ts, Vx_ts);
+
+				coord* coord_tr_nz = CK42_to_NZ(CK42_0, CK42_ti, AZIM);
+				Tr_ti = *coord_tr_nz;
+				NZ_ti = *(coord_tr_nz + 1);
+
+				Tr_M7 = Povorot_NZ_na_AZIM(NZ_M7, H_ts, AZIM);
+
+				// Выводим пересчитанные координаты в диалог
+				char buffer[15];
+
+				_gcvt_s(buffer, 15, (AZIM * 180 / pi), 6);
+				SetDlgItemTextA(hDlg, IDC_AZIM, buffer);
+
+				_gcvt_s(buffer, 15, Tr_ti.x, 6);
+				SetDlgItemTextA(hDlg, IDC_X_TI, buffer);
+				_gcvt_s(buffer, 15, Tr_ti.y, 5);
+				SetDlgItemTextA(hDlg, IDC_Y_TI, buffer);
+				_gcvt_s(buffer, 15, Tr_ti.z, 5);
+				SetDlgItemTextA(hDlg, IDC_Z_TI, buffer);
+
+				_gcvt_s(buffer, 15, NZ_ti.x, 6);
+				SetDlgItemTextA(hDlg, IDC_X_TI2, buffer);
+				_gcvt_s(buffer, 15, NZ_ti.y, 5);
+				SetDlgItemTextA(hDlg, IDC_Y_TI2, buffer);
+				_gcvt_s(buffer, 15, NZ_ti.z, 5);
+				SetDlgItemTextA(hDlg, IDC_Z_TI2, buffer);
+
+				_gcvt_s(buffer, 15, Tr_M7.x, 6);
+				SetDlgItemTextA(hDlg, IDC_X_M7, buffer);
+				_gcvt_s(buffer, 15, Tr_M7.y, 5);
+				SetDlgItemTextA(hDlg, IDC_Y_M7, buffer);
+				_gcvt_s(buffer, 15, Tr_M7.z, 5);
+				SetDlgItemTextA(hDlg, IDC_Z_M7, buffer);
+
+				dTraj = A_minus_B(Tr_M7, Tr_ti);
+				_gcvt_s(buffer, 15, dTraj.x, 4);
+				SetDlgItemTextA(hDlg, IDC_DX, buffer);
+				_gcvt_s(buffer, 15, dTraj.y, 4);
+				SetDlgItemTextA(hDlg, IDC_DY, buffer);
+				_gcvt_s(buffer, 15, dTraj.z, 4);
+				SetDlgItemTextA(hDlg, IDC_DZ, buffer);
+
+				PROMAH = (sqrt((dTraj.x * dTraj.x) + (dTraj.y * dTraj.y) + (dTraj.z * dTraj.z)));
+				char buf[10];
+				_gcvt_s(buf, 10, PROMAH, 6);
+				SetDlgItemTextA(hDlg, IDC_PROMAH, buf);
+			}
+			else if (PEREVOD_TYPE == 1)
+			{
+				for (int idc = 1005; idc < 1012; idc++)
+				{
+					SetDlgItemText(hDlg, idc, NULL);
+				}
+				for (int idc = 1015; idc < 1018; idc++)
+				{
+					SetDlgItemText(hDlg, idc, NULL);
+				}
+				for (int idc = 1021; idc < 1025; idc++)
+				{
+					SetDlgItemText(hDlg, idc, NULL);
+				}
+
+				// Получаем данные для перевода
+				Tr_ti.x = GetParamFromEditBox(hDlg, IDC_X_TI, 12);
+				Tr_ti.y = GetParamFromEditBox(hDlg, IDC_Y_TI, 12);
+				Tr_ti.z = GetParamFromEditBox(hDlg, IDC_Z_TI);
+
+				CK42_0.B = GetParamFromEditBox(hDlg, IDC_B_TS, 12);
+				CK42_0.L = GetParamFromEditBox(hDlg, IDC_L_TS, 12);
+				H_ts = GetParamFromEditBox(hDlg, IDC_H_TS);
+				CK42_0.H = H_ts;
+
+				Tr_M7.x = GetParamFromEditBox(hDlg, IDC_X_M7);
+				Tr_M7.y = GetParamFromEditBox(hDlg, IDC_Y_M7);
+				Tr_M7.z = GetParamFromEditBox(hDlg, IDC_Z_M7);
+
+				Vx_ts = GetParamFromEditBox(hDlg, IDC_VX);
+				Vz_ts = GetParamFromEditBox(hDlg, IDC_VZ);
+
+
+				// Считаем...
+
+				AZIM = atan2(Vz_ts, Vx_ts);
+
+				NZ_ti = Tr_ti;
+				CK42_ti = NZ_to_CK42(CK42_0, &NZ_ti, AZIM);
+				
+				NZ_M7 = Povorot_Tr_na_AZIM_to_NZ(Tr_M7, H_ts, AZIM);
+
+				// Выводим пересчитанные координаты в диалог
+				char buffer[15];
+
+				_gcvt_s(buffer, 15, (AZIM * 180 / pi), 6);
+				SetDlgItemTextA(hDlg, IDC_AZIM, buffer);
+
+				_gcvt_s(buffer, 15, CK42_ti.B, 10);
+				SetDlgItemTextA(hDlg, IDC_B_TI, buffer);
+				_gcvt_s(buffer, 15, CK42_ti.L, 10);
+				SetDlgItemTextA(hDlg, IDC_L_TI, buffer);
+				_gcvt_s(buffer, 15, CK42_ti.H, 6);
+				SetDlgItemTextA(hDlg, IDC_H_TI, buffer);
+
+				_gcvt_s(buffer, 15, NZ_M7.x, 6);
+				SetDlgItemTextA(hDlg, IDC_X_NZM7, buffer);
+				_gcvt_s(buffer, 15, NZ_M7.y, 6);
+				SetDlgItemTextA(hDlg, IDC_Y_NZM7, buffer);
+				_gcvt_s(buffer, 15, NZ_M7.z, 6);
+				SetDlgItemTextA(hDlg, IDC_Z_NZM7, buffer);
+
+
+				_gcvt_s(buffer, 15, NZ_ti.x, 6);
+				SetDlgItemTextA(hDlg, IDC_X_TI2, buffer);
+				_gcvt_s(buffer, 15, NZ_ti.y, 5);
+				SetDlgItemTextA(hDlg, IDC_Y_TI2, buffer);
+				_gcvt_s(buffer, 15, NZ_ti.z, 5);
+				SetDlgItemTextA(hDlg, IDC_Z_TI2, buffer);
+
+			}
+			
+			break;
+		}
+		case IDC_CANCEL:
+		{
+			for (int idc = 1000; idc < 1025; idc++)
+			{
+				SetDlgItemText(hDlg, idc, NULL);
+			}
+			break;
+		}
+		case IDC_LOAD:
+		{
+			for (int idc = 1000; idc < 1025; idc++)
+			{
+				SetDlgItemText(hDlg, idc, NULL);
+			}
+			// создаем диалоговое окно для выбора файла
+			file.lpstrTitle = _T("Open file");
+			file.Flags = OFN_HIDEREADONLY;
+			// если файл не открылся, выходим из функции
+			if (!GetOpenFileName(&file)) return 1;
+			// организуем поток данных из открытого файла
+			in.open(name);
+			// прочищаем вектор строк перед записью
+			if (!str.empty()) std::vector<std::string>().swap(str);
+			// из потока считываем по одной строке и записываем в вектор строк пока не кончится поток
+			while (getline(in, s)) str.push_back(s);
+			// закрываем поток
+			in.close();
+
+			/*LOAD*/
+			std::string st;
+			std::string s;
+
+			st = str[0];
+			if (st == "Перевод из СК-42 в ТрСК.")
+			{
+				if (PEREVOD_TYPE == 1)
+				{
+					SetDlgItemText(hDLG, IDC_TEXT_TITLE, _T("ПЕРЕВОД ИЗ СК-42 В ТРАЕКТОРНУЮ СК"));
+					SetDlgItemText(hDLG, IDC_TEXT_CK42TI, _T("Точка интереса (CK-42)"));
+					SetDlgItemText(hDLG, IDC_TEXT_NZM7, _T("Точка М7 (НЗСК)"));
+					SetDlgItemText(hDLG, IDC_TEXT_TRTI, _T("Точка интереса (ТрСК)"));
+					SetDlgItemText(hDLG, IDC_TEXT_TRM7, _T("Точка М7 (ТрСК)"));
+					SetDlgItemText(hDLG, IDC_TEXT_BTI, _T("Bти"));
+					SetDlgItemText(hDLG, IDC_TEXT_LTI, _T("Lти"));
+					SetDlgItemText(hDLG, IDC_TEXT_HTI, _T("Hти"));
+					SetDlgItemText(hDLG, IDC_TEXT_XTI, _T("Xти"));
+					SetDlgItemText(hDLG, IDC_TEXT_YTI, _T("Yти"));
+					SetDlgItemText(hDLG, IDC_TEXT_ZTI, _T("Zти"));
+					SetDlgItemText(hDLG, IDC_TEXT_TI1, _T("рад"));
+					SetDlgItemText(hDLG, IDC_TEXT_TI2, _T("рад"));
+					SetDlgItemText(hDLG, IDC_TEXT_TI3, _T("м"));
+					SetDlgItemText(hDLG, IDC_TEXT_TI4, _T("м"));
+
+
+					for (int idc = 1009; idc < 1012; idc++)
+					{
+						SetDlgItemText(hDLG, idc, NULL);
+					}
+					for (int idc = 1015; idc < 1022; idc++)
+					{
+						SetDlgItemText(hDLG, idc, NULL);
+					}
+
+					PEREVOD_TYPE = 0;
+				}
+				int msg = DisplayWarningMessageBox(hDlg, L"Формат файла загрузки неверен. Выберите другой файл загрузки.", NULL);
+				break;
+			}
+			else if (st == "Перевод из ТрСК в СК-42.")
+			{
+				if (PEREVOD_TYPE == 0)
+				{
+					SetDlgItemText(hDLG, IDC_TEXT_TITLE, _T("ПЕРЕВОД ИЗ ТРАЕКТОРНОЙ СК В СК-42"));
+					SetDlgItemText(hDLG, IDC_TEXT_TRTI, _T("Точка интереса (CK-42)"));
+					SetDlgItemText(hDLG, IDC_TEXT_TRM7, _T("Точка М7 (НЗСК)"));
+					SetDlgItemText(hDLG, IDC_TEXT_CK42TI, _T("Точка интереса (ТрСК)"));
+					SetDlgItemText(hDLG, IDC_TEXT_NZM7, _T("Точка М7 (ТрСК)"));
+					SetDlgItemText(hDLG, IDC_TEXT_XTI, _T("Bти"));
+					SetDlgItemText(hDLG, IDC_TEXT_YTI, _T("Lти"));
+					SetDlgItemText(hDLG, IDC_TEXT_ZTI, _T("Hти"));
+					SetDlgItemText(hDLG, IDC_TEXT_BTI, _T("Xти"));
+					SetDlgItemText(hDLG, IDC_TEXT_LTI, _T("Yти"));
+					SetDlgItemText(hDLG, IDC_TEXT_HTI, _T("Zти"));
+					SetDlgItemText(hDLG, IDC_TEXT_TI3, _T("рад"));
+					SetDlgItemText(hDLG, IDC_TEXT_TI4, _T("рад"));
+					SetDlgItemText(hDLG, IDC_TEXT_TI1, _T("м"));
+					SetDlgItemText(hDLG, IDC_TEXT_TI2, _T("м"));
+
+					for (int idc = 1009; idc < 1012; idc++)
+					{
+						SetDlgItemText(hDLG, idc, NULL);
+					}
+					for (int idc = 1015; idc < 1022; idc++)
+					{
+						SetDlgItemText(hDLG, idc, NULL);
+					}
+
+					PEREVOD_TYPE = 1;
+				}
+				PEREVOD_TYPE = 1;
+			}
+			else
+			{
+				int msg = DisplayWarningMessageBox(hDlg, L"Формат файла загрузки неверен. Выберите другой файл загрузки.", NULL);
+				break;
+			}
+
+      // считываем данные из файла и заполняем ими соответствующие переменные
+      get_data_from_file(PEREVOD_TYPE);
+
+			if (PEREVOD_TYPE == 0)
+			{
+				char buffer[15];
+
+        // выводим данные в диалог
+				_gcvt_s(buffer, 15, CK42_ti.B, 10);
+				SetDlgItemTextA(hDlg, IDC_B_TI, buffer);
+				_gcvt_s(buffer, 15, CK42_ti.L, 10);
+				SetDlgItemTextA(hDlg, IDC_L_TI, buffer);
+				_gcvt_s(buffer, 15, CK42_ti.H, 7);
+				SetDlgItemTextA(hDlg, IDC_H_TI, buffer);
+
+				_gcvt_s(buffer, 15, CK42_0.B, 10);
+				SetDlgItemTextA(hDlg, IDC_B_TS, buffer);
+				_gcvt_s(buffer, 15, CK42_0.L, 10);
+				SetDlgItemTextA(hDlg, IDC_L_TS, buffer);
+				_gcvt_s(buffer, 15, CK42_0.H, 7);
+				SetDlgItemTextA(hDlg, IDC_H_TS, buffer);
+
+				_gcvt_s(buffer, 15, NZ_M7.x, 7);
+				SetDlgItemTextA(hDlg, IDC_X_NZM7, buffer);
+				_gcvt_s(buffer, 15, NZ_M7.y, 7);
+				SetDlgItemTextA(hDlg, IDC_Y_NZM7, buffer);
+				_gcvt_s(buffer, 15, NZ_M7.z, 7);
+				SetDlgItemTextA(hDlg, IDC_Z_NZM7, buffer);
+
+				_gcvt_s(buffer, 15, Vx_ts, 5);
+				SetDlgItemTextA(hDlg, IDC_VX, buffer);
+				_gcvt_s(buffer, 15, Vz_ts, 5);
+				SetDlgItemTextA(hDlg, IDC_VZ, buffer);
+
+				H_ts = CK42_0.H;
+				//CK42_0.H = 0;
+				
+				break;
+			}
+			else if (PEREVOD_TYPE == 1)
+			{
+				char buffer[15];
+
+        // выводим данные в диалог
+				_gcvt_s(buffer, 15, Tr_ti.x, 7);
+				SetDlgItemTextA(hDlg, IDC_X_TI, buffer);
+				_gcvt_s(buffer, 15, Tr_ti.y, 7);
+				SetDlgItemTextA(hDlg, IDC_Y_TI, buffer);
+				_gcvt_s(buffer, 15, Tr_ti.z, 7);
+				SetDlgItemTextA(hDlg, IDC_Z_TI, buffer);
+
+				_gcvt_s(buffer, 15, CK42_0.B, 10);
+				SetDlgItemTextA(hDlg, IDC_B_TS, buffer);
+				_gcvt_s(buffer, 15, CK42_0.L, 10);
+				SetDlgItemTextA(hDlg, IDC_L_TS, buffer);
+				_gcvt_s(buffer, 15, CK42_0.H, 7);
+				SetDlgItemTextA(hDlg, IDC_H_TS, buffer);
+
+				_gcvt_s(buffer, 15, Tr_M7.x, 7);
+				SetDlgItemTextA(hDlg, IDC_X_M7, buffer);
+				_gcvt_s(buffer, 15, Tr_M7.y, 7);
+				SetDlgItemTextA(hDlg, IDC_Y_M7, buffer);
+				_gcvt_s(buffer, 15, Tr_M7.z, 7);
+				SetDlgItemTextA(hDlg, IDC_Z_M7, buffer);
+
+				_gcvt_s(buffer, 15, Vx_ts, 5);
+				SetDlgItemTextA(hDlg, IDC_VX, buffer);
+				_gcvt_s(buffer, 15, Vz_ts, 5);
+				SetDlgItemTextA(hDlg, IDC_VZ, buffer);
+
+				H_ts = CK42_0.H;
+
+				break;
+			}
+			
+			break;
+		}
+		case IDC_SAVE:
+		{
+			file.lpstrTitle = _T("Открыть файл для записи");
+			file.Flags = OFN_NOTESTFILECREATE;
+			if (!GetSaveFileName(&file)) return 1;
+			hFile = CreateFile(name, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+
+			/*SAVE*/
+
+			std::vector<std::string> out_str;
+			char tab[3] = "\t\0";
+			char cn[4] = "\r\n\0";
+
+			int size;
+
+      // формируем строки для записи в файл
+			out_str = create_string(PEREVOD_TYPE);
+      
+			const char* ch;
+			int fail;
+			DWORD result;
+
+      // записываем строки в файл
+			for (int i = 0; i < out_str.size(); i++)
+			{
+				ch = out_str[i].data();
+				size = out_str[i].size();
+				fail = WriteFile(hFile, ch, size, &result, NULL);
+			}
+			CloseHandle(hFile);
+			break;
+
+		}
+		}
+	default: return FALSE;
+	}
+	return TRUE;
+}
