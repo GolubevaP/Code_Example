@@ -52,7 +52,7 @@ void Chart::Plot()
     QAbstractAxis *axis_y = chart()->axisY();
     chart()->removeAxis(axis_y);
 
-    emit setAxis();
+    setAxis();
 
     // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     // ДАННЫЕ:
